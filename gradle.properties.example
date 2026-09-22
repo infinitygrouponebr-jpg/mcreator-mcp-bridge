@@ -1,0 +1,7 @@
+# Absolute path to a checkout of https://github.com/MCreator/MCreator at tag 2026.2.33518.
+# Do not point this at a newer main/master checkout than the installed MCreator.
+mcreator_path=C:/path/to/MCreator-2026.2.33518
+
+# 2026.2.33518 uses JBR/JDK 25. On Windows, the JBR from the installed MCreator is normally:
+mcreator_jdk_path=C:/path/to/MCreator20262/jdk
+org.gradle.java.installations.paths=C:/path/to/MCreator20262/jdk

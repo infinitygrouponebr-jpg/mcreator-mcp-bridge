@@ -1,0 +1,12 @@
+{
+  "id": "mcreator_mcp_bridge",
+  "supportedversions": [2026001, 2026002],
+  "weight": 0,
+  "javaplugin": "net.mcreator.mcpbridge.MCreatorMcpBridgePlugin",
+  "info": {
+    "name": "MCreator MCP Bridge",
+    "version": "0.1.0",
+    "description": "Exposes a minimal Model Context Protocol bridge for MCreator.",
+    "author": "Your name"
+  }
+}

@@ -1,0 +1,16 @@
+# Gradle and generated plugin artifacts
+.gradle/
+build/
+outputs/
+
+# Local MCreator checkout used only for compileOnly integration
+work/
+
+# Machine-specific build configuration and local editor state
+gradle.properties
+.idea/
+*.iml
+
+# Logs and local MCP credentials
+*.log
+**/mcp-bridge/token.txt

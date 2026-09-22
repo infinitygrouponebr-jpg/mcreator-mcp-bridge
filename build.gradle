@@ -1,0 +1,85 @@
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'java'
+}
+
+def mcreatorPathValue = providers.gradleProperty('mcreator_path').orNull
+if (mcreatorPathValue == null || mcreatorPathValue.isBlank()) {
+    throw new GradleException('Set mcreator_path in gradle.properties to a checkout of the MCreator core.')
+}
+
+def mcreatorPath = file(mcreatorPathValue)
+def mcreatorClasses = file("${mcreatorPath}/build/classes/java/main")
+def coreWrapper = new File(mcreatorPath, System.getProperty('os.name').toLowerCase().contains('windows') ? 'gradlew.bat' : 'gradlew')
+// A release checkout need not contain the bundled JBR files. Prefer an explicit
+// path, then the Gradle toolchain path, then JAVA_HOME (for example, the JBR in
+// the installed MCreator distribution).
+def mcreatorJdkPath = providers.gradleProperty('mcreator_jdk_path')
+        .orElse(providers.gradleProperty('org.gradle.java.installations.paths'))
+        .orElse(providers.environmentVariable('JAVA_HOME')).orNull
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.gradle.org/gradle/libs-releases' }
+}
+
+group = 'net.mcreator.mcpbridge'
+version = new JsonSlurper().parse(file('src/main/resources/plugin.json')).info.version
+
+// The released MCreator 2026.2.33518 target uses JBR/JDK 25. Point Gradle at the
+// JBR from that installation in gradle.properties. mcreator_path must be a checkout
+// at the matching 2026.2.33518 tag, not a newer main/master checkout.
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+configurations {
+    // Put a dependency here only when it is not already supplied by MCreator at runtime.
+    export
+    implementation.extendsFrom export
+}
+
+dependencies {
+    // The MCreator core is deliberately not a Gradle subproject: its build is root-project-only.
+    // Compile against a source checkout at the same release tag as the installed MCreator.
+    // The packaged Windows installation does not expose the core as a consumable JAR.
+    compileOnly files(mcreatorClasses)
+    compileOnly fileTree(dir: new File(mcreatorPath, 'lib'), include: ['*.jar'])
+
+    // ModElementManager exposes its persistence format through Gson. MCreator 2026.2 ships
+    // Gson 2.14.0 at runtime; this is compileOnly and is never bundled into the plugin ZIP.
+    compileOnly 'com.google.code.gson:gson:2.14.0'
+
+    // Required for the plugin entry point; MCreator itself provides it at runtime.
+    compileOnly 'org.apache.logging.log4j:log4j-api:2.26.1'
+}
+
+tasks.register('compileMCreatorCore', Exec) {
+    group = 'build setup'
+    description = 'Asks the MCreator checkout to compile its core classes before compiling this plugin.'
+    doFirst {
+        if (!coreWrapper.isFile()) {
+            throw new GradleException("MCreator Gradle wrapper not found: ${coreWrapper}")
+        }
+    }
+    workingDir mcreatorPath
+    commandLine coreWrapper.absolutePath, '--no-daemon'
+    if (mcreatorJdkPath != null && !mcreatorJdkPath.isBlank()) {
+        args "-Dorg.gradle.java.installations.paths=${mcreatorJdkPath}"
+    }
+    args 'compileJava'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    dependsOn tasks.named('compileMCreatorCore')
+    options.compilerArgs += ['--add-modules', 'jdk.httpserver']
+    doFirst {
+        if (!mcreatorClasses.isDirectory()) {
+            throw new GradleException("MCreator classes were not produced at ${mcreatorClasses}")
+        }
+    }
+}
+
+tasks.jar {
+    archiveFileName.set('mcreator-mcp-bridge.zip')
+    from { configurations.export.collect { it.isDirectory() ? it : zipTree(it) } }
+}
