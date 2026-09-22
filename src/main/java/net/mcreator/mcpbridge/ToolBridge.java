@@ -34,4 +34,10 @@ interface ToolBridge {
     Object getElementDefinition(Map<String, Object> arguments) throws Exception;
     Object listWorkspaceAssets(Map<String, Object> arguments) throws Exception;
     Object readWorkspaceAsset(Map<String, Object> arguments) throws Exception;
+    Object updateProcedure(Map<String, Object> arguments) throws Exception;
+    Object deleteModElement(Map<String, Object> arguments) throws Exception;
+    Object runBuild(Map<String, Object> arguments) throws Exception;
+    Object getLastBuildLog(Map<String, Object> arguments) throws Exception;
+    Object captureMCreatorWindow(Map<String, Object> arguments) throws Exception;
+    void authorizeTool(String toolName) throws Exception;
 }

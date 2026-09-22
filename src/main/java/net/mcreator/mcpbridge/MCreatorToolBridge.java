@@ -53,8 +53,12 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.util.Base64;
 import javax.xml.transform.OutputKeys;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerFactory;
@@ -64,10 +68,25 @@ import javax.xml.transform.stream.StreamResult;
 /** Boundary between the MCP protocol threads and the current MCreator workspace. */
 final class MCreatorToolBridge implements ToolBridge {
     private volatile MCreator mcreator;
+    private final McpAccessController accessController;
+    private final McpBuildService buildService;
+
+    MCreatorToolBridge() { this(new McpAccessController(), new McpBuildService()); }
+    MCreatorToolBridge(McpAccessController accessController, McpBuildService buildService) {
+        this.accessController = accessController;
+        this.buildService = buildService;
+    }
 
     /** Called for every opened MCreator window by the plugin's MCreatorLoadedEvent listener. */
     void setMCreator(MCreator mcreator) {
         this.mcreator = mcreator;
+    }
+
+    McpAccessController accessController() { return accessController; }
+    McpBuildService buildService() { return buildService; }
+
+    @Override public void authorizeTool(String toolName) throws Exception {
+        onEdt(() -> { accessController.authorize(requireMCreator(), toolName); return null; });
     }
 
     @Override public Object listModElements(Map<String, Object> arguments) throws Exception {
@@ -1508,6 +1527,89 @@ final class MCreatorToolBridge implements ToolBridge {
     }
 
     private record ResourceFile(String uri, Path file) { }
+
+    /** Validates and atomically replaces an existing Procedure XML before persisting/regenerating it. */
+    @Override public Object updateProcedure(Map<String, Object> arguments) throws Exception {
+        return onEdt(() -> {
+            Workspace workspace = currentWorkspace();
+            String name = requiredString(arguments, "name");
+            String xml = requiredString(arguments, "xml");
+            ModElement modElement = workspace.getModElementByName(name);
+            if (modElement == null || modElement.getType() != ModElementType.PROCEDURE
+                    || !(modElement.getGeneratableElement() instanceof net.mcreator.element.types.Procedure procedure)) {
+                throw new IllegalArgumentException("No procedure mod element named '" + name + "' exists");
+            }
+            ProcedureValidation validation = validateProcedure(workspace, xml);
+            if (!validation.valid()) {
+                throw new IllegalArgumentException("Procedure XML validation failed; no changes were saved: "
+                        + Json.stringify(validation.notes()));
+            }
+            procedure.procedurexml = xml;
+            workspace.getGenerator().generateElement(procedure, true);
+            workspace.getModElementManager().storeModElement(procedure);
+            modElement.reinit(workspace);
+            workspace.markDirty();
+            requireMCreator().reloadWorkspaceTabContents();
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("name", modElement.getName()); result.put("updated", true);
+            validation.addInference(result);
+            return result;
+        });
+    }
+
+    /** Uses Workspace.removeModElement, MCreator's complete deletion lifecycle for files, metadata, and in-memory state. */
+    @Override public Object deleteModElement(Map<String, Object> arguments) throws Exception {
+        return onEdt(() -> {
+            Workspace workspace = currentWorkspace();
+            String name = requiredString(arguments, "name");
+            ModElement element = workspace.getModElementByName(name);
+            if (element == null) throw new IllegalArgumentException("No mod element named '" + name + "' exists");
+            String type = element.getType().getRegistryName();
+            workspace.removeModElement(element);
+            workspace.markDirty();
+            requireMCreator().reloadWorkspaceTabContents();
+            return Map.of("name", name, "type", type, "deleted", true);
+        });
+    }
+
+    @Override public Object runBuild(Map<String, Object> arguments) throws Exception {
+        String action = optionalString(arguments.get("action"));
+        if (action == null) action = "build";
+        final String selected = action.toLowerCase(Locale.ROOT);
+        return onEdt(() -> {
+            // Match BuildWorkspaceAction: refresh generated base files before invoking Gradle.
+            requireMCreator().getGenerator().generateBase();
+            return buildService.start(requireMCreator(), selected);
+        });
+    }
+
+    @Override public Object getLastBuildLog(Map<String, Object> arguments) {
+        return buildService.lastLog();
+    }
+
+    /** Captures the currently rendered MCreator frame, scaled to at most 1280 pixels wide, as a PNG data URI. */
+    @Override public Object captureMCreatorWindow(Map<String, Object> arguments) throws Exception {
+        return onEdt(() -> {
+            MCreator window = requireMCreator();
+            int width = Math.max(1, window.getWidth()), height = Math.max(1, window.getHeight());
+            double scale = Math.min(1d, 1280d / width);
+            BufferedImage source = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = source.createGraphics();
+            try { window.printAll(graphics); } finally { graphics.dispose(); }
+            int targetWidth = Math.max(1, (int) Math.round(width * scale));
+            int targetHeight = Math.max(1, (int) Math.round(height * scale));
+            BufferedImage image = source;
+            if (scale < 1d) {
+                image = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D scaled = image.createGraphics();
+                try { scaled.drawImage(source, 0, 0, targetWidth, targetHeight, null); } finally { scaled.dispose(); }
+            }
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(image, "png", bytes);
+            return Map.of("mimeType", "image/png", "width", targetWidth, "height", targetHeight,
+                    "data", "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes.toByteArray()));
+        });
+    }
 
     private Workspace currentWorkspace() {
         return requireMCreator().getWorkspace();

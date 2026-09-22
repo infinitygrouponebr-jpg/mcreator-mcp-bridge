@@ -57,6 +57,21 @@ Após atualizar o checkout do MCreator, execute novamente `gradle jar`. A tarefa
 
 ## Transporte HTTP local (recomendado)
 
+## Controle, segurança, build e captura
+
+Depois que um workspace é aberto, o botão **MCP** na barra superior abre o painel do Bridge. Ele mostra o estado HTTP, endpoint, origem do token (o token é mascarado), total de requisições, estado do build e um histórico local de tráfego sem segredos. O painel permite ativar **Read-only mode**: nesse modo qualquer tool que alteraria o workspace, código ou arquivos é bloqueada antes de executar. O estado inicial também pode ser definido com `-Dmcreator.mcp.read_only=true`.
+
+Por padrão, o Bridge pede confirmação no Swing do MCreator antes de `write_code_element`, `update_element_from_json`, `update_procedure` e `delete_mod_element`. Não aprove uma caixa de diálogo se a ação não foi solicitada por você. Para automação local deliberada, a confirmação pode ser desligada no painel ou com `-Dmcreator.mcp.confirmations.disabled=true`.
+
+Novas tools:
+
+- `run_build({"action":"build"|"client"|"export"})` inicia uma tarefa no Gradle Tooling configurado pelo próprio MCreator. A resposta é imediata; consulte `get_last_build_log({})` até o campo `status` deixar de ser `running`. O log inclui `stdout` e `stderr` capturados. `export` também retorna o caminho relativo definido pelo gerador em `export_file`.
+- `delete_mod_element({"name":"..."})` chama `Workspace.removeModElement`, portanto remove a definição, arquivos associados e estado em memória pelo ciclo oficial do MCreator; exige confirmação.
+- `update_procedure({"name":"...","xml":"..."})` primeiro faz a validação Blockly completa. Se houver erro, não salva nada; se passar, persiste e regenera a procedure.
+- `capture_mcreator_window({})` devolve uma imagem PNG, como data URI, da janela MCreator atualmente renderizada (reduzida a no máximo 1280 px de largura). É uma captura visual da interface aberta, útil para revisão humana/IA. Para dados estruturados de uma GUI salva, use `get_element_definition` e `list_workspace_assets`; a captura não tenta inventar uma renderização headless de um editor que não esteja aberto.
+
+O build e a captura visual são operações locais; `run_build` também é bloqueado por modo somente leitura. A captura continua disponível em modo somente leitura.
+
 O plugin inicia HTTP por padrão em `http://127.0.0.1:39217/mcp`. Ele usa o Streamable HTTP do MCP, em modo stateless: cada mensagem JSON-RPC é enviada por `POST /mcp` e recebe uma resposta `application/json`. Não há dependência Gradle nova: `HttpServer` vem do módulo JDK `jdk.httpserver`.
 
 O servidor nunca escuta em `0.0.0.0`; é ligado explicitamente a `127.0.0.1`. Também rejeita `Origin` que não seja `http://localhost:<porta>` ou `http://127.0.0.1:<porta>` e exige um token em todas as requisições.

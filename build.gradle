@@ -51,6 +51,10 @@ dependencies {
 
     // Required for the plugin entry point; MCreator itself provides it at runtime.
     compileOnly 'org.apache.logging.log4j:log4j-api:2.26.1'
+
+    // Gradle Tooling is supplied by the MCreator 2026.2 runtime (lib/gradle-tooling-api-9.6.1.jar).
+    // It is compileOnly so the plugin does not bundle or replace MCreator's Gradle runtime.
+    compileOnly 'org.gradle:gradle-tooling-api:9.6.1'
 }
 
 tasks.register('compileMCreatorCore', Exec) {

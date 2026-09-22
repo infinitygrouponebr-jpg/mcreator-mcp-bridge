@@ -5,17 +5,31 @@ import net.mcreator.plugin.Plugin;
 import net.mcreator.plugin.events.workspace.MCreatorLoadedEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import javax.swing.*;
+import java.awt.event.ActionEvent;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Entry point loaded by MCreator. */
 public final class MCreatorMcpBridgePlugin extends JavaPlugin {
     private static final Logger LOG = LogManager.getLogger("MCreator MCP Bridge");
     private final McpStdioServer stdioServer;
-    private final McpHttpServer httpServer;
+    private McpHttpServer httpServer;
+    private final MCreatorToolBridge tools;
+    private final AtomicReference<McpControlPanel> controlPanel = new AtomicReference<>();
 
     public MCreatorMcpBridgePlugin(Plugin plugin) {
         super(plugin);
-        MCreatorToolBridge tools = new MCreatorToolBridge();
-        addListener(MCreatorLoadedEvent.class, event -> tools.setMCreator(event.getMCreator()));
+        tools = new MCreatorToolBridge();
+        addListener(MCreatorLoadedEvent.class, event -> {
+            tools.setMCreator(event.getMCreator());
+            SwingUtilities.invokeLater(() -> {
+                McpControlPanel panel = new McpControlPanel(event.getMCreator(), tools.accessController(), tools.buildService(), httpServer);
+                controlPanel.set(panel);
+                event.getMCreator().getToolBar().addToRightToolbar(new AbstractAction("MCP") {
+                    @Override public void actionPerformed(ActionEvent actionEvent) { panel.show(); }
+                }).setToolTipText("Open MCreator MCP Bridge control panel");
+            });
+        });
         stdioServer = new McpStdioServer(tools);
 
         // stdio is opt-in: MCreator normally owns the process stdin/stdout. Set this JVM property
@@ -29,7 +43,8 @@ public final class MCreatorMcpBridgePlugin extends JavaPlugin {
 
         // HTTP is enabled by default because it binds exclusively to 127.0.0.1 and requires a token.
         if (Boolean.parseBoolean(System.getProperty("mcreator.mcp.http.enabled", "true"))) {
-            httpServer = McpHttpServer.fromSystemProperties(tools, message -> LOG.info(message));
+            httpServer = McpHttpServer.fromSystemProperties(tools, message -> LOG.info(message),
+                    message -> { McpControlPanel panel = controlPanel.get(); if (panel != null) panel.recordTraffic(message); });
             httpServer.start();
         } else {
             httpServer = null;
@@ -46,5 +61,6 @@ public final class MCreatorMcpBridgePlugin extends JavaPlugin {
     public void shutdown() {
         stdioServer.stop();
         if (httpServer != null) httpServer.stop();
+        tools.buildService().shutdown();
     }
 }

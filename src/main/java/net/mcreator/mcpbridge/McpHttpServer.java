@@ -16,6 +16,7 @@ import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Stateless MCP Streamable HTTP transport, deliberately bound to 127.0.0.1 only. */
 final class McpHttpServer {
@@ -25,20 +26,29 @@ final class McpHttpServer {
     private final int port;
     private final String token;
     private final Consumer<String> log;
+    private final Consumer<String> traffic;
+    private final AtomicLong requestCount = new AtomicLong();
     private HttpServer server;
     private ExecutorService executor;
 
     McpHttpServer(ToolBridge tools, int port, String token, Consumer<String> log) {
+        this(tools, port, token, log, ignored -> { });
+    }
+    McpHttpServer(ToolBridge tools, int port, String token, Consumer<String> log, Consumer<String> traffic) {
         this.handler = new McpJsonRpcHandler(Objects.requireNonNull(tools));
         this.port = port;
         this.token = Objects.requireNonNull(token);
         this.log = Objects.requireNonNull(log);
+        this.traffic = Objects.requireNonNull(traffic);
     }
 
     static McpHttpServer fromSystemProperties(ToolBridge tools, Consumer<String> log) {
+        return fromSystemProperties(tools, log, ignored -> { });
+    }
+    static McpHttpServer fromSystemProperties(ToolBridge tools, Consumer<String> log, Consumer<String> traffic) {
         int port = parsePort(System.getProperty("mcreator.mcp.http.port"), DEFAULT_PORT, log);
         String token = resolveToken(log);
-        return new McpHttpServer(tools, port, token, log);
+        return new McpHttpServer(tools, port, token, log, traffic);
     }
 
     /** Resolves the token without ever changing the persisted value when an explicit JVM property exists. */
@@ -124,8 +134,18 @@ final class McpHttpServer {
         if (executor != null) { executor.shutdownNow(); executor = null; }
     }
 
+    int getPort() { return port; }
+    boolean isRunning() { return server != null; }
+    long getRequestCount() { return requestCount.get(); }
+    String getTokenPreview() { return token.length() <= 8 ? "********" : token.substring(0, 4) + "…" + token.substring(token.length() - 4); }
+    String getTokenOrigin() { return System.getProperty("mcreator.mcp.http.token") != null && !System.getProperty("mcreator.mcp.http.token").isBlank()
+            ? "system property mcreator.mcp.http.token" : persistedTokenPath().toString(); }
+
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
+            requestCount.incrementAndGet();
+            traffic.accept(exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath()
+                    + " from " + exchange.getRemoteAddress().getAddress().getHostAddress());
             if (!"/mcp".equals(exchange.getRequestURI().getPath())) { send(exchange, 404, "text/plain", "Not found"); return; }
             if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()) { send(exchange, 403, "text/plain", "Local connections only"); return; }
             if (!validOrigin(exchange.getRequestHeaders().getFirst("Origin"))) { send(exchange, 403, "text/plain", "Invalid Origin"); return; }
